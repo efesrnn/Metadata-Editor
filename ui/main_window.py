@@ -1,9 +1,10 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                               QSplitter, QFileSystemModel, QTreeView, QLabel, 
-                               QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QMessageBox)
-from PySide6.QtCore import Qt, QDir
-from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QSplitter, QMessageBox, QStatusBar)
+from PySide6.QtCore import Qt
 from utils.metadata_handler import MetadataHandler
+from ui.widgets.file_tree import FileTree
+from ui.widgets.preview_panel import PreviewPanel
+from ui.widgets.metadata_panel import MetadataPanel
+from ui.styles import COLORS
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -16,112 +17,65 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # Splitter for resizing panels
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(2)
         main_layout.addWidget(splitter)
 
         # --- Left Panel: File Browser ---
-        self.file_model = QFileSystemModel()
-        self.file_model.setRootPath(QDir.rootPath())
-        self.file_model.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs | QDir.Files)
-        
-        self.tree_view = QTreeView()
-        self.tree_view.setModel(self.file_model)
-        self.tree_view.setRootIndex(self.file_model.index(QDir.homePath())) # Start at home
-        self.tree_view.setColumnWidth(0, 250)
-        self.tree_view.setAlternatingRowColors(True)
-        # Hide unnecessary columns for cleaner look (Size, Type, Date) - optional
-        # for i in range(1, 4):
-        #     self.tree_view.hideColumn(i)
-
-        splitter.addWidget(self.tree_view)
+        self.file_tree = FileTree()
+        splitter.addWidget(self.file_tree)
 
         # --- Center Panel: Preview ---
-        preview_widget = QWidget()
-        preview_layout = QVBoxLayout(preview_widget)
-        
-        self.preview_label = QLabel("Önizleme Yok")
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("border: 2px dashed #555; border-radius: 10px; color: #888;")
-        preview_layout.addWidget(self.preview_label)
-
-        splitter.addWidget(preview_widget)
+        self.preview_panel = PreviewPanel()
+        splitter.addWidget(self.preview_panel)
 
         # --- Right Panel: Metadata Editor ---
-        metadata_widget = QWidget()
-        metadata_layout = QVBoxLayout(metadata_widget)
-
-        metadata_label = QLabel("Metadata Düzenleyici")
-        metadata_label.setStyleSheet("font-weight: bold; font-size: 16px; margin-bottom: 10px;")
-        metadata_layout.addWidget(metadata_label)
-
-        self.metadata_table = QTableWidget(0, 2)
-        self.metadata_table.setHorizontalHeaderLabels(["Etiket", "Değer"])
-        self.metadata_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.metadata_table.verticalHeader().setVisible(False)
-        metadata_layout.addWidget(self.metadata_table)
-
-        save_btn = QPushButton("Kaydet")
-        save_btn.setStyleSheet("padding: 10px; font-weight: bold;")
-        save_btn.clicked.connect(self.save_metadata)
-        metadata_layout.addWidget(save_btn)
-
-        splitter.addWidget(metadata_widget)
+        self.metadata_panel = MetadataPanel()
+        splitter.addWidget(self.metadata_panel)
 
         # Set initial sizes
-        splitter.setSizes([300, 600, 300])
+        splitter.setSizes([280, 600, 320])
 
         # Connections
-        self.tree_view.selectionModel().selectionChanged.connect(self.on_selection_changed)
+        self.file_tree.selectionModel().selectionChanged.connect(self.on_selection_changed)
+        self.metadata_panel.save_btn.clicked.connect(self.save_metadata)
+
+        # Status Bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
 
     def on_selection_changed(self, selected, deselected):
-        indexes = selected.indexes()
-        if indexes:
-            index = indexes[0]
-            file_path = self.file_model.filePath(index)
-            
-            # --- Update Preview ---
-            if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-                pixmap = QPixmap(file_path)
-                if not pixmap.isNull():
-                    self.preview_label.setPixmap(pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                else:
-                    self.preview_label.setText("Önizleme Yüklenemedi")
-            else:
-                self.preview_label.setText(f"Önizleme Yok: {file_path}")
-                self.preview_label.clear()
-                self.preview_label.setText(f"Dosya: {file_path}")
+        file_path = self.file_tree.get_selected_path()
+        if file_path:
+            self.status_bar.showMessage(file_path)
+            # Update Preview
 
-            # --- Update Metadata ---
+            self.preview_panel.update_preview(file_path)
+            
+            # Update Metadata
             metadata = MetadataHandler.get_metadata(file_path)
-            self.metadata_table.setRowCount(len(metadata))
-            for row, (key, value) in enumerate(metadata.items()):
-                self.metadata_table.setItem(row, 0, QTableWidgetItem(str(key)))
-                self.metadata_table.setItem(row, 1, QTableWidgetItem(str(value)))
+            self.metadata_panel.load_metadata(metadata)
 
     def save_metadata(self):
-        indexes = self.tree_view.selectionModel().selectedIndexes()
-        if not indexes:
+        file_path = self.file_tree.get_selected_path()
+        if not file_path:
             QMessageBox.warning(self, "Uyarı", "Lütfen bir dosya seçin.")
             return
 
-        file_path = self.file_model.filePath(indexes[0])
-        
-        # Collect data from table
-        new_data = {}
-        row_count = self.metadata_table.rowCount()
-        for i in range(row_count):
-            key_item = self.metadata_table.item(i, 0)
-            value_item = self.metadata_table.item(i, 1)
-            if key_item and value_item:
-                new_data[key_item.text()] = value_item.text()
+        # Collect data from panel
+        new_data = self.metadata_panel.get_metadata()
 
         # Save via handler
         success, message = MetadataHandler.save_metadata(file_path, new_data)
         if success:
             QMessageBox.information(self, "Başarılı", message)
-            # Reload metadata? 
-            # self.on_selection_changed(...) # Optional
+            # Reload metadata to ensure view is consistent
+            metadata = MetadataHandler.get_metadata(file_path)
+            self.metadata_panel.load_metadata(metadata)
         else:
             QMessageBox.critical(self, "Hata", message)
+

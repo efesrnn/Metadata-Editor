@@ -1,5 +1,0 @@
-PySide6
-Pillow
-mutagen
-ffmpeg-python
-qt-material
