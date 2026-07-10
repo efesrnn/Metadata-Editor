@@ -32,6 +32,12 @@ npm run app:build    # çıktı: src-tauri/target/release/bundle/
 
 Video karesi thumbnail'ları için `ffmpeg` PATH'te olmalı. Yoksa videolar 🎬 rozetiyle listelenir, oynatma yine çalışır. Kurulum: `winget install Gyan.FFmpeg`.
 
+## Dil / Language
+
+Sağ üstteki **🇹🇷 TR / 🇬🇧 EN** düğmesiyle arayüz Türkçe ve İngilizce arasında anında geçer; tercih kaydedilir. Arama iki dilli ve **aksan-duyarsızdır** — "ağustos", "agustos" veya "august" aynı sonucu verir; "video", "foto", "fotoğraf", "resim" gibi terimler de çalışır. Ay/tür gibi klasör adları, gruplama sırasında seçili dile göre oluşturulur.
+
+The top-right **🇹🇷 TR / 🇬🇧 EN** button switches the whole UI between Turkish and English instantly (preference is saved). Search is bilingual and **accent-insensitive**.
+
 ## Kullanım
 
 1. **+ Klasör tara** ile bir veya birden çok klasör seç. Alt klasörler dahil paralel taranır; metadata okunur, thumbnail üretilir (ilerleme alt çubukta).

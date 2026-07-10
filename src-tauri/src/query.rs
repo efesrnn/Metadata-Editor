@@ -128,7 +128,8 @@ pub fn query_media(db: &Db, f: &Filter) -> Result<Vec<MediaItem>> {
     let sql = format!(
         "SELECT id, path, root, file_name, ext, kind, size_bytes, modified_at,
                 taken_at, year, month, gps_lat, gps_lon, camera_make, camera_model,
-                width, height, duration_s, orientation, thumb_path
+                width, height, duration_s, orientation, thumb_path,
+                place_name, region, country
          FROM media {where_sql}
          ORDER BY {} {}
          LIMIT {limit} OFFSET {offset}",
@@ -160,6 +161,9 @@ pub fn query_media(db: &Db, f: &Filter) -> Result<Vec<MediaItem>> {
             duration_s: r.get(17)?,
             orientation: r.get(18)?,
             thumb_path: r.get(19)?,
+            place_name: r.get(20)?,
+            region: r.get(21)?,
+            country: r.get(22)?,
         })
     })?;
 

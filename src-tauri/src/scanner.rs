@@ -6,8 +6,18 @@ use crate::metadata::{self, kind_from_ext, MediaKind};
 use crate::thumbnails;
 
 use chrono::{DateTime, Utc};
+use once_cell::sync::Lazy;
 use rayon::prelude::*;
+use reverse_geocoder::ReverseGeocoder;
 use serde::Serialize;
+
+// Cevrimdisi ters cografi kodlayici (GeoNames verisi gomulu). Bir kez yuklenir.
+static GEOCODER: Lazy<ReverseGeocoder> = Lazy::new(ReverseGeocoder::new);
+
+fn non_empty(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() { None } else { Some(t.to_string()) }
+}
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -22,6 +32,14 @@ pub struct ScanProgress {
     pub processed: usize,
     pub total: usize,
     pub current: String,
+}
+
+/// Bir onizleme hazir oldugunda frontend'e canli gonderilir.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbReady {
+    pub path: String,
+    pub thumb: String,
 }
 
 fn emit(app: &AppHandle, p: ScanProgress) {
@@ -42,6 +60,15 @@ fn build_item(path: &Path, root: &str, kind: MediaKind) -> Option<MediaItem> {
         });
 
     let meta = metadata::extract(path, kind);
+
+    // GPS varsa cevrimdisi yer adi (sehir/eyalet/ulke)
+    let (place_name, region, country) = match (meta.gps_lat, meta.gps_lon) {
+        (Some(lat), Some(lon)) => {
+            let rec = GEOCODER.search((lat, lon)).record;
+            (non_empty(&rec.name), non_empty(&rec.admin1), non_empty(&rec.cc))
+        }
+        _ => (None, None, None),
+    };
 
     // Tarih onceligi: cekim tarihi -> dosya degistirme tarihi
     let effective = meta.taken_at.clone().or(modified_at.clone());
@@ -77,6 +104,9 @@ fn build_item(path: &Path, root: &str, kind: MediaKind) -> Option<MediaItem> {
         duration_s: meta.duration_s,
         orientation: meta.orientation.map(|o| o as i64),
         thumb_path: None,
+        place_name,
+        region,
+        country,
     })
 }
 
@@ -99,6 +129,7 @@ pub fn scan_roots(
     app: &AppHandle,
     db: Arc<Db>,
     cache_dir: PathBuf,
+    bin_dir: PathBuf,
     roots: Vec<String>,
     make_thumbs: bool,
 ) -> anyhow::Result<usize> {
@@ -185,6 +216,8 @@ pub fn scan_roots(
         let tapp = app.clone();
         let tdb = db.clone();
         let ttotal = items.len();
+        // Video kareleri icin ffmpeg'i bir kez cozumle
+        let ff = thumbnails::resolve_ffmpeg(Some(&bin_dir));
 
         items.par_iter().for_each(|it| {
             let kind = if it.kind == "video" {
@@ -193,8 +226,11 @@ pub fn scan_roots(
                 MediaKind::Photo
             };
             let src = Path::new(&it.path);
-            if let Some(thumb) = thumbnails::ensure_thumb(&tcache, src, kind) {
-                let _ = tdb.set_thumb(&it.path, &thumb.to_string_lossy());
+            if let Some(thumb) = thumbnails::ensure_thumb(&tcache, src, kind, ff.as_deref()) {
+                let ts = thumb.to_string_lossy().to_string();
+                let _ = tdb.set_thumb(&it.path, &ts);
+                // Onizleme hazir: frontend'e canli gonder
+                let _ = tapp.emit("thumb://ready", ThumbReady { path: it.path.clone(), thumb: ts });
             }
             let n = tprocessed.fetch_add(1, Ordering::Relaxed) + 1;
             if n % 20 == 0 || n == ttotal {

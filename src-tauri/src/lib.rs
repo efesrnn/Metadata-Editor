@@ -19,6 +19,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::scan_directories,
+            commands::generate_thumbs,
+            commands::download_ffmpeg,
             commands::get_media,
             commands::get_stats,
             commands::plan_group,

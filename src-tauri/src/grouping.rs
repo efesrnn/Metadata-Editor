@@ -47,6 +47,9 @@ pub struct GroupRequest {
     /// Event kumeleme icin saat cinsinden bosluk esigi (varsayilan 12).
     #[serde(default)]
     pub event_gap_hours: Option<f64>,
+    /// Klasor adlari icin dil ("tr" | "en"). Varsayilan "en".
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 /// Tek bir planlanan islem.
@@ -82,42 +85,65 @@ fn sanitize(name: &str) -> String {
     }
 }
 
-const TR_MONTHS: [&str; 12] = [
-    "01-Ocak", "02-Subat", "03-Mart", "04-Nisan", "05-Mayis", "06-Haziran",
-    "07-Temmuz", "08-Agustos", "09-Eylul", "10-Ekim", "11-Kasim", "12-Aralik",
+// Klasor adlari icin ay isimleri (numara + isim). UTF-8 diakritikler NTFS'te sorunsuz.
+const MONTHS_EN: [&str; 12] = [
+    "01 - January", "02 - February", "03 - March", "04 - April", "05 - May", "06 - June",
+    "07 - July", "08 - August", "09 - September", "10 - October", "11 - November", "12 - December",
+];
+const MONTHS_TR: [&str; 12] = [
+    "01 - Ocak", "02 - Şubat", "03 - Mart", "04 - Nisan", "05 - Mayıs", "06 - Haziran",
+    "07 - Temmuz", "08 - Ağustos", "09 - Eylül", "10 - Ekim", "11 - Kasım", "12 - Aralık",
 ];
 
+struct Labels {
+    photos: &'static str,
+    videos: &'static str,
+    with_loc: &'static str,
+    no_loc: &'static str,
+    no_cam: &'static str,
+    no_date: &'static str,
+    months: &'static [&'static str; 12],
+}
+
+fn labels_for(lang: &str) -> Labels {
+    if lang == "tr" {
+        Labels {
+            photos: "Fotoğraflar", videos: "Videolar",
+            with_loc: "Konumlu", no_loc: "Konumsuz",
+            no_cam: "Kamerasız", no_date: "Tarihsiz", months: &MONTHS_TR,
+        }
+    } else {
+        Labels {
+            photos: "Photos", videos: "Videos",
+            with_loc: "With location", no_loc: "No location",
+            no_cam: "No camera", no_date: "No date", months: &MONTHS_EN,
+        }
+    }
+}
+
 /// Bir oge icin grup klasor yolunu (dest_base'e gore) hesapla.
-fn group_folder(it: &MediaItem, group_by: &GroupBy) -> String {
+fn group_folder(it: &MediaItem, group_by: &GroupBy, l: &Labels) -> String {
     match group_by {
         GroupBy::Year => it
             .year
             .map(|y| y.to_string())
-            .unwrap_or_else(|| "Tarihsiz".into()),
+            .unwrap_or_else(|| l.no_date.into()),
         GroupBy::Month => match (it.year, it.month) {
             (Some(y), Some(m)) if (1..=12).contains(&m) => {
-                format!("{}/{}", y, TR_MONTHS[(m - 1) as usize])
+                format!("{}/{}", y, l.months[(m - 1) as usize])
             }
-            _ => "Tarihsiz".into(),
+            _ => l.no_date.into(),
         },
         GroupBy::Type => {
-            if it.kind == "video" {
-                "Videolar".into()
-            } else {
-                "Fotograflar".into()
-            }
+            if it.kind == "video" { l.videos.into() } else { l.photos.into() }
         }
         GroupBy::Camera => it
             .camera_model
             .as_deref()
             .map(sanitize)
-            .unwrap_or_else(|| "Kamerasiz".into()),
+            .unwrap_or_else(|| l.no_cam.into()),
         GroupBy::Location => {
-            if it.gps_lat.is_some() && it.gps_lon.is_some() {
-                "Konumlu".into()
-            } else {
-                "Konumsuz".into()
-            }
+            if it.gps_lat.is_some() && it.gps_lon.is_some() { l.with_loc.into() } else { l.no_loc.into() }
         }
         GroupBy::Event => String::new(), // ayrica hesaplanir
     }
@@ -125,7 +151,7 @@ fn group_folder(it: &MediaItem, group_by: &GroupBy) -> String {
 
 /// Event (zaman boslugu) kumeleme: ogeleri tarihe gore siralar, esik ustu
 /// bosluklarda yeni kume acar.
-fn event_labels(items: &[MediaItem], gap_hours: f64) -> Vec<String> {
+fn event_labels(items: &[MediaItem], gap_hours: f64, event_word: &str) -> Vec<String> {
     // (index, timestamp) — tarihe gore sirala
     let mut idxs: Vec<usize> = (0..items.len()).collect();
     let ts = |it: &MediaItem| -> Option<i64> {
@@ -151,7 +177,7 @@ fn event_labels(items: &[MediaItem], gap_hours: f64) -> Vec<String> {
         if t.is_some() {
             last = t;
         }
-        labels[i] = format!("Etkinlik {:02}", cluster);
+        labels[i] = format!("{} {:02}", event_word, cluster);
     }
     labels
 }
@@ -176,14 +202,19 @@ fn unique_dest(dir: &Path, file_name: &str, planned: &mut std::collections::Hash
 pub fn build_plan(db: &Db, req: &GroupRequest) -> anyhow::Result<GroupPlan> {
     let items = query_media(db, &req.filter)?;
     let dest_base = PathBuf::from(&req.dest_base);
+    let lang = req.lang.as_deref().unwrap_or("en");
+    let l = labels_for(lang);
+    let event_word = if lang == "tr" { "Etkinlik" } else { "Event" };
     let mut warnings = Vec::new();
 
     if items.is_empty() {
-        warnings.push("Secili filtreye uyan oge yok.".into());
+        warnings.push(
+            if lang == "tr" { "Seçili filtreye uyan öğe yok." } else { "No items match the current filter." }.into(),
+        );
     }
 
     let event_labels = if req.group_by == GroupBy::Event {
-        event_labels(&items, req.event_gap_hours.unwrap_or(12.0))
+        event_labels(&items, req.event_gap_hours.unwrap_or(12.0), event_word)
     } else {
         Vec::new()
     };
@@ -196,12 +227,12 @@ pub fn build_plan(db: &Db, req: &GroupRequest) -> anyhow::Result<GroupPlan> {
         let mut group = if req.group_by == GroupBy::Event {
             event_labels[i].clone()
         } else {
-            group_folder(it, &req.group_by)
+            group_folder(it, &req.group_by, &l)
         };
 
         // Ek foto/video ayrimi
         if req.also_split_type && req.group_by != GroupBy::Type {
-            let sub = if it.kind == "video" { "Videolar" } else { "Fotograflar" };
+            let sub = if it.kind == "video" { l.videos } else { l.photos };
             group = format!("{}/{}", group, sub);
         }
 
@@ -255,7 +286,7 @@ pub fn build_merge_plan(req: &MergeRequest) -> anyhow::Result<GroupPlan> {
     let mut ops = Vec::new();
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let mut warnings = vec![
-        "Merge her zaman KOPYALAR — orijinal dosyalariniz oldugu yerde kalir, hicbir sey silinmez.".to_string(),
+        "Merge always COPIES — your original files stay where they are; nothing is deleted.".to_string(),
     ];
 
     for src_root in &req.sources {
@@ -301,7 +332,7 @@ pub fn build_merge_plan(req: &MergeRequest) -> anyhow::Result<GroupPlan> {
 
     if PathBuf::from(&req.dest).exists() {
         // Sorun degil ama kullaniciya bildir
-        warnings.push("Hedef klasor zaten var; dosyalar icine eklenecek (ustune yazilmaz).".into());
+        warnings.push("Destination folder already exists; files will be added into it (no overwrite).".into());
     }
 
     let total = ops.len();

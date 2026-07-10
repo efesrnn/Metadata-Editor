@@ -21,6 +21,9 @@ export interface MediaItem {
   duration_s: number | null;
   orientation: number | null;
   thumb_path: string | null;
+  place_name: string | null;
+  region: string | null;
+  country: string | null;
 }
 
 export interface Filter {
@@ -54,7 +57,7 @@ export interface LibraryStats {
 }
 
 export interface ScanProgress {
-  phase: "walking" | "reading" | "thumbnails" | "done";
+  phase: "walking" | "reading" | "thumbnails" | "done" | "download";
   processed: number;
   total: number;
   current: string;
@@ -70,6 +73,7 @@ export interface GroupRequest {
   destBase: string;
   alsoSplitType?: boolean;
   eventGapHours?: number;
+  lang?: "en" | "tr";
 }
 
 export interface MergeRequest {

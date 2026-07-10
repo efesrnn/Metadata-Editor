@@ -11,7 +11,7 @@ export const MONTHS: Record<Lang, string[]> = {
 type Dict = Record<string, string>;
 
 const en: Dict = {
-  brand: "MetaGallery",
+  brand: "SortedView",
   "search.placeholder": "Search: file name, camera, date, location…",
   "btn.select": "Select",
   "btn.selectDone": "Done",
@@ -22,7 +22,6 @@ const en: Dict = {
   "btn.scanning": "Scanning…",
   "btn.language": "Türkçe",
 
-  // Sidebar
   "side.library": "Library",
   "stat.total": "Total",
   "stat.shown": "Shown",
@@ -51,25 +50,26 @@ const en: Dict = {
   "side.folders": "Folders",
   "btn.clearFilters": "Clear filters",
 
-  // Empty / scan
   "empty.title": "No media yet.",
   "empty.body": "To get started, scan a folder. Your files stay where they are — nothing is copied.",
-  "empty.ffmpeg": "ffmpeg is not installed, so video previews use a placeholder (optional).",
-  "ffmpeg.banner": "Install ffmpeg for real video thumbnails:",
+  "empty.ffmpeg": "Video previews are created on demand — no setup needed.",
+  "thumbs.banner": "{n} videos have no preview yet.",
+  "thumbs.generate": "Generate video previews",
+  "thumbs.downloading": "Preparing video support (one-time download)…",
+  "thumbs.error": "Could not set up video support. Check your internet connection.",
   "ffmpeg.dismiss": "Dismiss",
   "scan.walking": "Scanning files…",
   "scan.reading": "Reading metadata",
   "scan.thumbnails": "Generating previews",
+  "scan.download": "Preparing video support…",
   "scan.done": "Completed",
   "footer.summary": "{total} items · {photos} photos · {videos} videos · {gps} with location",
   "footer.note": "Filters are in-app · grouping affects real folders",
 
-  // Section headers
   "section.noDate": "No date",
   "today": "Today",
   "yesterday": "Yesterday",
 
-  // Lightbox
   "lb.close": "Close",
   "lb.prev": "Previous",
   "lb.next": "Next",
@@ -83,10 +83,14 @@ const en: Dict = {
   "meta.location": "Location",
   "meta.duration": "Duration",
   "meta.folder": "Folder",
+  "meta.place": "Place",
   "kind.photo": "Photo",
   "kind.video": "Video",
+  "view.grid": "Grid",
+  "view.map": "Map",
+  "map.empty": "No items with location. Scan photos that have GPS data.",
+  "map.count": "{n} located items",
 
-  // Grouping modal
   "grp.title": "Group & split into folders",
   "grp.desc": "Works on the currently filtered items. Preview first, then apply.",
   "grp.type": "Grouping type",
@@ -121,7 +125,6 @@ const en: Dict = {
   "btn.working": "Working…",
   "btn.close": "Close",
 
-  // Merge modal
   "mrg.title": "Merge folders",
   "mrg.badge": "Merge always COPIES — originals are preserved, nothing is deleted.",
   "mrg.sources": "Source folders",
@@ -136,7 +139,7 @@ const en: Dict = {
 };
 
 const tr: Dict = {
-  brand: "MetaGallery",
+  brand: "SortedView",
   "search.placeholder": "Ara: dosya adı, kamera, tarih, konum…",
   "btn.select": "Seç",
   "btn.selectDone": "Bitir",
@@ -177,12 +180,16 @@ const tr: Dict = {
 
   "empty.title": "Henüz medya yok.",
   "empty.body": "Başlamak için bir klasör tarayın. Dosyalarınız olduğu yerde kalır — hiçbir şey kopyalanmaz.",
-  "empty.ffmpeg": "ffmpeg kurulu değil, bu yüzden video önizlemeleri yer tutucu kullanır (isteğe bağlı).",
-  "ffmpeg.banner": "Gerçek video küçük resimleri için ffmpeg kurun:",
+  "empty.ffmpeg": "Video önizlemeleri istendiğinde oluşturulur — kurulum gerekmez.",
+  "thumbs.banner": "{n} videonun önizlemesi yok.",
+  "thumbs.generate": "Video önizlemelerini oluştur",
+  "thumbs.downloading": "Video desteği hazırlanıyor (tek seferlik indirme)…",
+  "thumbs.error": "Video desteği kurulamadı. İnternet bağlantınızı kontrol edin.",
   "ffmpeg.dismiss": "Kapat",
   "scan.walking": "Dosyalar taranıyor…",
   "scan.reading": "Metadata okunuyor",
   "scan.thumbnails": "Önizlemeler oluşturuluyor",
+  "scan.download": "Video desteği hazırlanıyor…",
   "scan.done": "Tamamlandı",
   "footer.summary": "{total} öğe · {photos} fotoğraf · {videos} video · {gps} konumlu",
   "footer.note": "Filtreler uygulama içidir · gruplama gerçek klasörlere etki eder",
@@ -204,8 +211,13 @@ const tr: Dict = {
   "meta.location": "Konum",
   "meta.duration": "Süre",
   "meta.folder": "Klasör",
+  "meta.place": "Yer",
   "kind.photo": "Fotoğraf",
   "kind.video": "Video",
+  "view.grid": "Izgara",
+  "view.map": "Harita",
+  "map.empty": "Konumu olan öğe yok. GPS verisi olan fotoğrafları tarayın.",
+  "map.count": "{n} konumlu öğe",
 
   "grp.title": "Grupla & klasörlere böl",
   "grp.desc": "Şu an filtrelenmiş öğeler üzerinde çalışır. Önce önizleyin, sonra uygulayın.",
@@ -280,11 +292,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = lang;
   }, [lang]);
 
-  // t ve context degeri yalnizca dil degisince yeniden olusur (stabil kimlik).
   const value = useMemo<I18nCtx>(() => {
     const t = (key: string, vars?: Record<string, string | number>) => {
       let s = DICTS[lang][key] ?? DICTS.en[key] ?? key;
-      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
+      if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
       return s;
     };
     return { lang, setLang: setLangState, t };
@@ -306,17 +317,44 @@ const FOLD: Record<string, string> = {
   "â": "a", "î": "i", "û": "u", "é": "e", "è": "e", "á": "a", "ó": "o",
 };
 
-/** Metni küçük harfe indirip Türkçe/aksanlı karakterleri sadeleştirir. */
+/** Metni küçük harfe indirir, aksan/ayraçları sadeleştirir (arama için). */
 export function norm(s: string): string {
   return (s || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "") // birleşik aksan işaretlerini kaldır
-    .replace(/[çğıöşüâîûéèáó]/g, (c) => FOLD[c] ?? c);
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[çğıöşüâîûéèáó]/g, (c) => FOLD[c] ?? c)
+    .replace(/[-_/.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
+// ABD eyaletleri: kod -> ad. "OH" ile "Ohio" aramalarını eşlemek için.
+const US_STATES: Record<string, string> = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+  CO: "Colorado", CT: "Connecticut", DE: "Delaware", FL: "Florida", GA: "Georgia",
+  HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas",
+  KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts",
+  MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana",
+  NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico",
+  NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma",
+  OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
+  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+  DC: "District of Columbia",
+};
+const US_STATE_BY_NAME: Record<string, string> = Object.fromEntries(
+  Object.entries(US_STATES).map(([code, name]) => [norm(name), code])
+);
 
 const PHOTO_SYN = "photo image picture fotograf foto resim gorsel";
 const VIDEO_SYN = "video film klip movie";
+
+/** İnsan-okur yer etiketi: "Put-in-Bay, Ohio, US". */
+export function placeLabel(it: MediaItem): string | null {
+  const parts = [it.place_name, it.region, it.country].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
 
 /** Bir öğe için iki dilli, aksan-duyarsız arama dizini üretir. */
 export function buildSearchIndex(it: MediaItem): string {
@@ -324,6 +362,16 @@ export function buildSearchIndex(it: MediaItem): string {
   if (it.year) parts.push(String(it.year));
   if (it.month && it.month >= 1 && it.month <= 12) {
     parts.push(MONTHS.en[it.month - 1], MONTHS.tr[it.month - 1]);
+  }
+  // Yer bilgisi + ABD eyalet kod/ad genişletmesi
+  if (it.place_name) parts.push(it.place_name);
+  if (it.country) parts.push(it.country);
+  if (it.region) {
+    parts.push(it.region);
+    const upper = it.region.trim().toUpperCase();
+    if (US_STATES[upper]) parts.push(US_STATES[upper]);          // "OH" -> "Ohio"
+    const code = US_STATE_BY_NAME[norm(it.region)];
+    if (code) parts.push(code);                                  // "Ohio" -> "OH"
   }
   parts.push(it.kind === "video" ? VIDEO_SYN : PHOTO_SYN);
   if (it.gps_lat != null) parts.push("location konum gps");

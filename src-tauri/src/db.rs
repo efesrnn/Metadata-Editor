@@ -31,6 +31,10 @@ pub struct MediaItem {
     pub duration_s: Option<f64>,
     pub orientation: Option<i64>,
     pub thumb_path: Option<String>,
+    // Ters cografi kodlamadan (offline) gelen yer bilgisi
+    pub place_name: Option<String>,
+    pub region: Option<String>,
+    pub country: Option<String>,
 }
 
 pub struct Db {
@@ -79,6 +83,9 @@ impl Db {
                 duration_s    REAL,
                 orientation   INTEGER,
                 thumb_path    TEXT,
+                place_name    TEXT,
+                region        TEXT,
+                country       TEXT,
                 content_hash  TEXT,
                 indexed_at    TEXT DEFAULT (datetime('now'))
             );
@@ -90,6 +97,10 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_media_gps     ON media(gps_lat, gps_lon);
             ",
         )?;
+        // Eski veritabanlari icin gecis: kolon yoksa ekle (varsa hatayi yut).
+        for col in ["place_name", "region", "country"] {
+            let _ = conn.execute(&format!("ALTER TABLE media ADD COLUMN {} TEXT", col), []);
+        }
         Ok(())
     }
 
@@ -109,9 +120,10 @@ impl Db {
                 "INSERT INTO media
                     (path, root, file_name, ext, kind, size_bytes, modified_at,
                      taken_at, year, month, gps_lat, gps_lon, camera_make,
-                     camera_model, width, height, duration_s, orientation, thumb_path)
+                     camera_model, width, height, duration_s, orientation, thumb_path,
+                     place_name, region, country)
                  VALUES
-                    (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
+                    (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)
                  ON CONFLICT(path) DO UPDATE SET
                     root=excluded.root, file_name=excluded.file_name, ext=excluded.ext,
                     kind=excluded.kind, size_bytes=excluded.size_bytes,
@@ -120,14 +132,16 @@ impl Db {
                     gps_lon=excluded.gps_lon, camera_make=excluded.camera_make,
                     camera_model=excluded.camera_model, width=excluded.width,
                     height=excluded.height, duration_s=excluded.duration_s,
-                    orientation=excluded.orientation",
+                    orientation=excluded.orientation, place_name=excluded.place_name,
+                    region=excluded.region, country=excluded.country",
             )?;
             for it in items {
                 stmt.execute(params![
                     it.path, it.root, it.file_name, it.ext, it.kind, it.size_bytes,
                     it.modified_at, it.taken_at, it.year, it.month, it.gps_lat,
                     it.gps_lon, it.camera_make, it.camera_model, it.width, it.height,
-                    it.duration_s, it.orientation, it.thumb_path
+                    it.duration_s, it.orientation, it.thumb_path,
+                    it.place_name, it.region, it.country
                 ])?;
             }
         }
@@ -143,6 +157,21 @@ impl Db {
             params![path, thumb],
         )?;
         Ok(())
+    }
+
+    /// Onizlemesi (thumb) olmayan ogeleri getir: (path, kind).
+    pub fn items_missing_thumb(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, kind FROM media WHERE thumb_path IS NULL OR thumb_path = ''
+             ORDER BY COALESCE(taken_at, modified_at) DESC",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// Bir dosyanin yeni yolunu yaz (tasima/merge sonrasi). Metadata degismez.

@@ -46,8 +46,25 @@ export function ffmpegStatus(): Promise<boolean> {
   return invoke<boolean>("ffmpeg_status");
 }
 
+/** Eksik onizlemeleri uret (yeniden taramaya gerek yok). Ilerleme olayi yayar. */
+export function generateThumbs(): Promise<number> {
+  return invoke<number>("generate_thumbs");
+}
+
+/** ffmpeg'i uygulamanin kendi klasorune indir (kullanici bir sey kurmaz). */
+export function downloadFfmpeg(): Promise<string> {
+  return invoke<string>("download_ffmpeg");
+}
+
 export function onScanProgress(cb: (p: ScanProgress) => void): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan://progress", (e) => cb(e.payload));
+}
+
+export interface ThumbReady { path: string; thumb: string; }
+
+/** Bir onizleme uretildiginde canli olarak tetiklenir. */
+export function onThumbReady(cb: (t: ThumbReady) => void): Promise<UnlistenFn> {
+  return listen<ThumbReady>("thumb://ready", (e) => cb(e.payload));
 }
 
 // Yerel dosyayi webview'de gostermek icin guvenli URL (kopyalama YOK).
