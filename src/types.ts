@@ -101,3 +101,16 @@ export interface ApplyResult {
   failed: number;
   errors: string[];
 }
+
+export interface FileOpResult {
+  succeeded: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface UndoPreview {
+  id: string;
+  root: string;
+  label: string;
+  files: string[];
+}

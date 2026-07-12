@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::path::Path;
+use little_exif::{exif_tag::ExifTag as WritableTag, metadata::Metadata, rational::uR64};
 
 use nom_exif::{
     Exif, ExifDateTime, ExifTag, MediaParser, MediaSource, TrackInfo, TrackInfoTag,
@@ -172,4 +173,132 @@ pub fn extract(path: &Path, kind: MediaKind) -> MediaMeta {
             MediaKind::Video => read_video_meta(&mut parser, path),
         }
     })
+}
+
+fn dms(value: f64) -> Vec<uR64> {
+    let absolute = value.abs();
+    let degrees = absolute.floor();
+    let minutes_full = (absolute - degrees) * 60.0;
+    let minutes = minutes_full.floor();
+    let seconds = (minutes_full - minutes) * 60.0;
+    vec![degrees.into(), minutes.into(), seconds.into()]
+}
+
+pub fn write_photo_location(path: &Path, lat: f64, lon: f64) -> anyhow::Result<()> {
+    let mut data = Metadata::new_from_path(path)?;
+    data.set_tag(WritableTag::GPSVersionID(vec![2, 3, 0, 0]));
+    data.set_tag(WritableTag::GPSLatitudeRef(if lat >= 0.0 { "N\0" } else { "S\0" }.to_string()));
+    data.set_tag(WritableTag::GPSLatitude(dms(lat)));
+    data.set_tag(WritableTag::GPSLongitudeRef(if lon >= 0.0 { "E\0" } else { "W\0" }.to_string()));
+    data.set_tag(WritableTag::GPSLongitude(dms(lon)));
+    data.set_tag(WritableTag::GPSMapDatum("WGS-84".to_string()));
+    data.write_to_file(path)?;
+    Ok(())
+}
+
+pub fn write_video_location(path: &Path, lat: f64, lon: f64, ffmpeg: &Path) -> anyhow::Result<()> {
+    let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("mp4");
+    let tmp = path.with_extension(format!("sortedview-location.tmp.{ext}"));
+    let iso6709 = format!("{lat:+.6}{lon:+.6}/");
+    let status = crate::thumbnails::hidden_command(ffmpeg)
+        .args(["-y", "-i"]).arg(path)
+        .args(["-map", "0", "-c", "copy", "-metadata", &format!("location={iso6709}"), "-metadata", &format!("location-eng={iso6709}")])
+        .arg(&tmp).status()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!("Video konumu yazılamadı (FFmpeg hata kodu: {:?})", status.code());
+    }
+    let backup = path.with_extension(format!("sortedview-backup.{ext}"));
+    std::fs::rename(path, &backup)?;
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::rename(&backup, path);
+        return Err(error.into());
+    }
+    std::fs::remove_file(backup)?;
+    Ok(())
+}
+
+pub fn write_video_datetime(path: &Path, datetime: &str, ffmpeg: &Path) -> anyhow::Result<()> {
+    let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("mp4");
+    let tmp = path.with_extension(format!("sortedview-date.tmp.{ext}"));
+    let value = format!("{}Z", datetime.trim_end_matches('Z'));
+    let status = crate::thumbnails::hidden_command(ffmpeg)
+        .args(["-y", "-i"]).arg(path)
+        .args(["-map", "0", "-c", "copy", "-metadata", &format!("creation_time={value}")])
+        .arg(&tmp).status()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!("Video tarih bilgisi yazılamadı (FFmpeg hata kodu: {:?})", status.code());
+    }
+    let backup = path.with_extension(format!("sortedview-date-backup.{ext}"));
+    std::fs::rename(path, &backup)?;
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::rename(&backup, path);
+        return Err(error.into());
+    }
+    std::fs::remove_file(backup)?;
+    Ok(())
+}
+
+pub fn write_photo_datetime(path: &Path, datetime: &str) -> anyhow::Result<()> {
+    let exif_value = datetime.replace('T', " ").replace('-', ":");
+    let mut data = Metadata::new_from_path(path)?;
+    data.set_tag(WritableTag::DateTimeOriginal(exif_value.clone()));
+    data.set_tag(WritableTag::CreateDate(exif_value));
+    data.write_to_file(path)?;
+    Ok(())
+}
+
+pub fn restore_photo_datetime(path: &Path, datetime: Option<&str>) -> anyhow::Result<()> {
+    let mut data = Metadata::new_from_path(path)?;
+    data.remove_tag(WritableTag::DateTimeOriginal(String::new()));
+    data.remove_tag(WritableTag::CreateDate(String::new()));
+    if let Some(datetime) = datetime {
+        let value = datetime.replace('T', " ").replace('-', ":");
+        data.set_tag(WritableTag::DateTimeOriginal(value.clone()));
+        data.set_tag(WritableTag::CreateDate(value));
+    }
+    data.write_to_file(path)?;
+    Ok(())
+}
+
+pub fn restore_photo_location(path: &Path, lat: Option<f64>, lon: Option<f64>) -> anyhow::Result<()> {
+    let mut data = Metadata::new_from_path(path)?;
+    for tag in [
+        WritableTag::GPSVersionID(Vec::new()), WritableTag::GPSLatitudeRef(String::new()),
+        WritableTag::GPSLatitude(Vec::new()), WritableTag::GPSLongitudeRef(String::new()),
+        WritableTag::GPSLongitude(Vec::new()), WritableTag::GPSMapDatum(String::new()),
+    ] { data.remove_tag(tag); }
+    if let (Some(lat), Some(lon)) = (lat, lon) {
+        data.set_tag(WritableTag::GPSVersionID(vec![2, 3, 0, 0]));
+        data.set_tag(WritableTag::GPSLatitudeRef(if lat >= 0.0 { "N\0" } else { "S\0" }.to_string()));
+        data.set_tag(WritableTag::GPSLatitude(dms(lat)));
+        data.set_tag(WritableTag::GPSLongitudeRef(if lon >= 0.0 { "E\0" } else { "W\0" }.to_string()));
+        data.set_tag(WritableTag::GPSLongitude(dms(lon)));
+        data.set_tag(WritableTag::GPSMapDatum("WGS-84".to_string()));
+    }
+    data.write_to_file(path)?;
+    Ok(())
+}
+
+fn clear_video_metadata(path: &Path, ffmpeg: &Path, args: &[&str], marker: &str) -> anyhow::Result<()> {
+    let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("mp4");
+    let tmp = path.with_extension(format!("sortedview-{marker}.tmp.{ext}"));
+    let mut command = crate::thumbnails::hidden_command(ffmpeg);
+    command.args(["-y", "-i"]).arg(path).args(["-map", "0", "-c", "copy"]);
+    command.args(args).arg(&tmp);
+    if !command.status()?.success() { let _ = std::fs::remove_file(&tmp); anyhow::bail!("Video metadata geri alınamadı"); }
+    let backup = path.with_extension(format!("sortedview-{marker}-backup.{ext}"));
+    std::fs::rename(path, &backup)?;
+    if let Err(error) = std::fs::rename(&tmp, path) { let _ = std::fs::rename(&backup, path); return Err(error.into()); }
+    std::fs::remove_file(backup)?;
+    Ok(())
+}
+
+pub fn clear_video_datetime(path: &Path, ffmpeg: &Path) -> anyhow::Result<()> {
+    clear_video_metadata(path, ffmpeg, &["-metadata", "creation_time="], "undo-date")
+}
+
+pub fn clear_video_location(path: &Path, ffmpeg: &Path) -> anyhow::Result<()> {
+    clear_video_metadata(path, ffmpeg, &["-metadata", "location=", "-metadata", "location-eng="], "undo-location")
 }

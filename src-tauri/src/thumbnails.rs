@@ -15,6 +15,17 @@ const THUMB_MAX: u32 = 256;
 // Cozumlenmis ffmpeg yolu onbellegi (basari halinde).
 static FFMPEG_CACHE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
+/// Windows'ta yardımcı CLI süreçlerinin konsol/Terminal penceresi açmasını engeller.
+pub(crate) fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 // Windows icin tasinabilir (static) ffmpeg indirme adresi.
 const FFMPEG_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 
@@ -56,10 +67,10 @@ fn make_video_thumb(ff: &Path, src: &Path, dst: &Path) -> bool {
     }
     let run = |ss: &str| -> bool {
         let _ = std::fs::remove_file(dst);
-        let status = Command::new(ff)
+        let status = hidden_command(ff)
             .args(["-y", "-ss", ss, "-i"])
             .arg(src)
-            .args(["-frames:v", "1", "-vf", "scale=256:-1:force_original_aspect_ratio=decrease", "-q:v", "4"])
+            .args(["-loglevel", "error", "-nostdin", "-map", "0:v:0", "-an", "-sn", "-dn", "-frames:v", "1", "-threads", "1", "-vf", "scale=256:256:force_original_aspect_ratio=decrease", "-q:v", "5"])
             .arg(dst)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -87,7 +98,7 @@ pub fn ensure_thumb(cache_dir: &Path, src: &Path, kind: MediaKind, ff: Option<&P
 }
 
 fn ffmpeg_works(path: &Path) -> bool {
-    Command::new(path)
+    hidden_command(path)
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -145,9 +156,7 @@ fn candidate_paths(extra_bin_dir: Option<&Path>) -> Vec<PathBuf> {
 /// ffmpeg'i cozumle (onbellekli). PATH'teki "ffmpeg" de denenir.
 pub fn resolve_ffmpeg(extra_bin_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = FFMPEG_CACHE.lock().unwrap().as_ref() {
-        if ffmpeg_works(p) {
-            return Some(p.clone());
-        }
+        return Some(p.clone());
     }
     // PATH ("ffmpeg") once
     let path_cmd = PathBuf::from("ffmpeg");
@@ -180,7 +189,7 @@ pub fn download_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
     let zip = bin_dir.join("ffmpeg_download.zip");
 
     // 1) Indir (curl.exe Windows 10/11'de yerlesik)
-    let curl = Command::new("curl")
+    let curl = hidden_command("curl")
         .args(["-L", "--fail", "--silent", "--show-error", "-o"])
         .arg(&zip)
         .arg(FFMPEG_URL)
@@ -194,7 +203,7 @@ pub fn download_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
     let extract_dir = bin_dir.join("_extract");
     let _ = std::fs::remove_dir_all(&extract_dir);
     std::fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
-    let tar = Command::new("tar")
+    let tar = hidden_command("tar")
         .arg("-xf")
         .arg(&zip)
         .arg("-C")

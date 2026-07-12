@@ -1,4 +1,4 @@
-# MetaGallery
+# SortedView
 
 Metadata tabanlı, Google Photos benzeri masaüstü foto/video yöneticisi.
 **Tauri 2 (Rust) + React/TypeScript.** Yalnızca Windows için yapılandırıldı.

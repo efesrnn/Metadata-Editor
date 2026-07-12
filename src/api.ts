@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   MediaItem, Filter, LibraryStats, ScanProgress,
-  GroupRequest, MergeRequest, GroupPlan, ApplyResult,
+  GroupRequest, MergeRequest, GroupPlan, ApplyResult, FileOpResult, UndoPreview,
 } from "./types";
 
 export async function pickDirectories(): Promise<string[]> {
@@ -30,6 +30,18 @@ export function getStats(): Promise<LibraryStats> {
   return invoke<LibraryStats>("get_stats");
 }
 
+export function checkRoots(roots: string[]): Promise<string[]> {
+  return invoke<string[]>("check_roots", { roots });
+}
+
+export function removeRoots(roots: string[], deleteThumbs = true): Promise<number> {
+  return invoke<number>("remove_roots", { roots, deleteThumbs });
+}
+
+export function copyFilesToClipboard(paths: string[]): Promise<void> {
+  return invoke<void>("copy_files_to_clipboard", { paths });
+}
+
 export function planGroup(req: GroupRequest): Promise<GroupPlan> {
   return invoke<GroupPlan>("plan_group", { req });
 }
@@ -44,6 +56,41 @@ export function applyLastPlan(): Promise<ApplyResult> {
 
 export function ffmpegStatus(): Promise<boolean> {
   return invoke<boolean>("ffmpeg_status");
+}
+
+export function setMediaLocation(item: MediaItem, lat: number, lon: number): Promise<void> {
+  return invoke<void>("set_media_location", {
+    path: item.path, root: item.root, kind: item.kind, lat, lon,
+    oldLat: item.gps_lat, oldLon: item.gps_lon, oldPlace: item.place_name,
+    oldRegion: item.region, oldCountry: item.country,
+  });
+}
+
+export function updateVideoDetails(item: MediaItem, fileName: string, takenAt: string): Promise<void> {
+  return invoke<void>("update_video_details", {
+    path: item.path, root: item.root, oldFileName: item.file_name,
+    oldTakenAt: item.taken_at, fileName, takenAt,
+  });
+}
+
+export function importTakeoutMetadata(items: MediaItem[]): Promise<FileOpResult> {
+  return invoke<FileOpResult>("import_takeout_metadata", { items });
+}
+
+export function moveToTrash(items: MediaItem[]): Promise<FileOpResult> {
+  return invoke<FileOpResult>("move_to_trash", { items });
+}
+
+export function restoreTrash(roots: string[]): Promise<FileOpResult> {
+  return invoke<FileOpResult>("restore_trash", { roots });
+}
+
+export function peekUndo(roots: string[]): Promise<UndoPreview | null> {
+  return invoke<UndoPreview | null>("peek_undo", { roots });
+}
+
+export function applyUndo(id: string): Promise<FileOpResult> {
+  return invoke<FileOpResult>("apply_undo", { id });
 }
 
 /** Eksik onizlemeleri uret (yeniden taramaya gerek yok). Ilerleme olayi yayar. */

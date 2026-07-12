@@ -7,6 +7,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
+use uuid::Uuid;
 
 /// Grid'e/filtreye gonderilen medya kaydi.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,11 +96,30 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_media_root    ON media(root);
             CREATE INDEX IF NOT EXISTS idx_media_camera  ON media(camera_model);
             CREATE INDEX IF NOT EXISTS idx_media_gps     ON media(gps_lat, gps_lon);
+            CREATE TABLE IF NOT EXISTS undo_actions (
+                id TEXT PRIMARY KEY,
+                root TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_undo_root_created ON undo_actions(root, created_at DESC);
             ",
         )?;
         // Eski veritabanlari icin gecis: kolon yoksa ekle (varsa hatayi yut).
         for col in ["place_name", "region", "country"] {
             let _ = conn.execute(&format!("ALTER TABLE media ADD COLUMN {} TEXT", col), []);
+        }
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+        let thumb_version: Option<String> = conn.query_row(
+            "SELECT value FROM app_meta WHERE key='thumb_version'", [], |row| row.get(0)
+        ).ok();
+        if thumb_version.as_deref() != Some("3") {
+            conn.execute("UPDATE media SET thumb_path=NULL", [])?;
+            conn.execute(
+                "INSERT INTO app_meta(key,value) VALUES('thumb_version','3') ON CONFLICT(key) DO UPDATE SET value='3'", []
+            )?;
         }
         Ok(())
     }
@@ -109,6 +129,22 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM media WHERE root = ?1", params![root])?;
         Ok(())
+    }
+
+    pub fn remove_roots(&self, roots: &[String]) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut thumbs = Vec::new();
+        for root in roots {
+            {
+                let mut stmt = tx.prepare("SELECT thumb_path FROM media WHERE root=?1 AND thumb_path IS NOT NULL")?;
+                let rows = stmt.query_map(params![root], |row| row.get::<_, String>(0))?;
+                for row in rows { if let Ok(path) = row { thumbs.push(path); } }
+            }
+            tx.execute("DELETE FROM media WHERE root=?1", params![root])?;
+        }
+        tx.commit()?;
+        Ok(thumbs)
     }
 
     /// Toplu ekleme (transaction ile). Var olan path guncellenir.
@@ -159,6 +195,36 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_rendered_orientation(&self, path: &str, rendered_width: u32, rendered_height: u32) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE media SET orientation=CASE
+                WHEN (width > height AND ?2 < ?3) OR (width < height AND ?2 > ?3) THEN 6
+                ELSE NULL END
+             WHERE path=?1",
+            params![path, rendered_width, rendered_height],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_location(&self, path: &str, lat: f64, lon: f64, place: Option<&str>, region: Option<&str>, country: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE media SET gps_lat=?2, gps_lon=?3, place_name=?4, region=?5, country=?6 WHERE path=?1",
+            params![path, lat, lon, place, region, country],
+        )?;
+        Ok(())
+    }
+
+    pub fn restore_location(&self, path: &str, lat: Option<f64>, lon: Option<f64>, place: Option<&str>, region: Option<&str>, country: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE media SET gps_lat=?2, gps_lon=?3, place_name=?4, region=?5, country=?6 WHERE path=?1",
+            params![path, lat, lon, place, region, country],
+        )?;
+        Ok(())
+    }
+
     /// Onizlemesi (thumb) olmayan ogeleri getir: (path, kind).
     pub fn items_missing_thumb(&self) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
@@ -182,5 +248,100 @@ impl Db {
             params![old, new, new_root, new_name],
         )?;
         Ok(())
+    }
+
+    pub fn update_video_details(&self, old_path: &str, new_path: &str, new_name: &str, taken_at: &str) -> Result<()> {
+        let year = taken_at.get(0..4).and_then(|v| v.parse::<i64>().ok());
+        let month = taken_at.get(5..7).and_then(|v| v.parse::<i64>().ok());
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE media SET path=?2, file_name=?3, taken_at=?4, year=?5, month=?6 WHERE path=?1",
+            params![old_path, new_path, new_name, taken_at, year, month],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_taken_at(&self, path: &str, taken_at: &str) -> Result<()> {
+        let year = taken_at.get(0..4).and_then(|v| v.parse::<i64>().ok());
+        let month = taken_at.get(5..7).and_then(|v| v.parse::<i64>().ok());
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE media SET taken_at=?2, year=?3, month=?4 WHERE path=?1",
+            params![path, taken_at, year, month],
+        )?;
+        Ok(())
+    }
+
+    pub fn restore_taken_at(&self, path: &str, taken_at: Option<&str>) -> Result<()> {
+        let year = taken_at.and_then(|v| v.get(0..4)).and_then(|v| v.parse::<i64>().ok());
+        let month = taken_at.and_then(|v| v.get(5..7)).and_then(|v| v.parse::<i64>().ok());
+        self.conn.lock().unwrap().execute(
+            "UPDATE media SET taken_at=?2, year=?3, month=?4 WHERE path=?1",
+            params![path, taken_at, year, month],
+        )?;
+        Ok(())
+    }
+
+    pub fn restore_video_identity(&self, current_path: &str, old_path: &str, old_name: &str, taken_at: Option<&str>) -> Result<()> {
+        let year = taken_at.and_then(|v| v.get(0..4)).and_then(|v| v.parse::<i64>().ok());
+        let month = taken_at.and_then(|v| v.get(5..7)).and_then(|v| v.parse::<i64>().ok());
+        self.conn.lock().unwrap().execute(
+            "UPDATE media SET path=?2,file_name=?3,taken_at=?4,year=?5,month=?6 WHERE path=?1",
+            params![current_path, old_path, old_name, taken_at, year, month],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_paths(&self, paths: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for path in paths { tx.execute("DELETE FROM media WHERE path=?1", params![path])?; }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn push_undo(&self, root: &str, kind: &str, label: &str, payload: &serde_json::Value) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO undo_actions(id,root,kind,label,payload,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![id, root, kind, label, payload.to_string(), now],
+        )?;
+        conn.execute(
+            "DELETE FROM undo_actions WHERE root=?1 AND id NOT IN
+             (SELECT id FROM undo_actions WHERE root=?1 ORDER BY created_at DESC LIMIT 5)",
+            params![root],
+        )?;
+        Ok(id)
+    }
+
+    pub fn latest_undo(&self, roots: &[String]) -> Result<Option<(String, String, String, String, String)>> {
+        if roots.is_empty() { return Ok(None); }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = (0..roots.len()).map(|i| format!("?{}", i + 1)).collect::<Vec<_>>().join(",");
+        let sql = format!("SELECT id,root,kind,label,payload FROM undo_actions WHERE root IN ({placeholders}) ORDER BY created_at DESC LIMIT 1");
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(roots.iter()))?;
+        let Some(row) = rows.next()? else { return Ok(None) };
+        Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+    }
+
+    pub fn get_undo(&self, id: &str) -> Result<Option<(String, String, String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id,root,kind,label,payload FROM undo_actions WHERE id=?1")?;
+        let mut rows = stmt.query(params![id])?;
+        let Some(row) = rows.next()? else { return Ok(None) };
+        Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+    }
+
+    pub fn delete_undo(&self, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("DELETE FROM undo_actions WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn root_for_path(&self, path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row("SELECT root FROM media WHERE path=?1", params![path], |row| row.get(0)).ok())
     }
 }

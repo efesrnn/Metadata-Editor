@@ -14,6 +14,11 @@ use serde::Serialize;
 // Cevrimdisi ters cografi kodlayici (GeoNames verisi gomulu). Bir kez yuklenir.
 static GEOCODER: Lazy<ReverseGeocoder> = Lazy::new(ReverseGeocoder::new);
 
+pub fn reverse_geocode(lat: f64, lon: f64) -> (Option<String>, Option<String>, Option<String>) {
+    let rec = GEOCODER.search((lat, lon)).record;
+    (non_empty(&rec.name), non_empty(&rec.admin1), non_empty(&rec.cc))
+}
+
 fn non_empty(s: &str) -> Option<String> {
     let t = s.trim();
     if t.is_empty() { None } else { Some(t.to_string()) }
@@ -64,8 +69,7 @@ fn build_item(path: &Path, root: &str, kind: MediaKind) -> Option<MediaItem> {
     // GPS varsa cevrimdisi yer adi (sehir/eyalet/ulke)
     let (place_name, region, country) = match (meta.gps_lat, meta.gps_lon) {
         (Some(lat), Some(lon)) => {
-            let rec = GEOCODER.search((lat, lon)).record;
-            (non_empty(&rec.name), non_empty(&rec.admin1), non_empty(&rec.cc))
+            reverse_geocode(lat, lon)
         }
         _ => (None, None, None),
     };
@@ -151,6 +155,9 @@ pub fn scan_roots(
         for entry in WalkDir::new(root)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|entry| {
+                entry.file_type().is_file() || !entry.file_name().to_string_lossy().eq_ignore_ascii_case("Trash")
+            })
             .filter_map(|e| e.ok())
         {
             if !entry.file_type().is_file() {
@@ -229,6 +236,11 @@ pub fn scan_roots(
             if let Some(thumb) = thumbnails::ensure_thumb(&tcache, src, kind, ff.as_deref()) {
                 let ts = thumb.to_string_lossy().to_string();
                 let _ = tdb.set_thumb(&it.path, &ts);
+                if it.kind == "video" {
+                    if let Ok((width, height)) = image::image_dimensions(&thumb) {
+                        let _ = tdb.set_rendered_orientation(&it.path, width, height);
+                    }
+                }
                 // Onizleme hazir: frontend'e canli gonder
                 let _ = tapp.emit("thumb://ready", ThumbReady { path: it.path.clone(), thumb: ts });
             }
